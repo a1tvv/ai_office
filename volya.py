@@ -205,7 +205,6 @@ async def on_text(m: Message) -> None:
 
 
 # ─────────────────────────── запуск ───────────────────────────
-
 async def main() -> None:
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
@@ -215,14 +214,24 @@ async def main() -> None:
 
             url = WEBHOOK_BASE.rstrip("/") + WEBHOOK_PATH
             await bot.set_webhook(url, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
+            
             app = web.Application()
+            
+            # Добавляем хэндлеры для пинга от Render (чтобы не было 404 ошибок)
+            async def index_handler(request):
+                return web.Response(text="Бот Павла Воли запущен и готов к работе!")
+                
+            app.router.add_get("/", index_handler)
             app.router.add_get("/health", lambda _r: web.Response(text="ok"))
+            
             SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(
                 app, path=WEBHOOK_PATH
             )
             setup_application(app, dp, bot=bot)
             runner = web.AppRunner(app)
             await runner.setup()
+            
+            # На Render порт берется из переменной окружения PORT (по умолчанию 10000 у Render)
             await web.TCPSite(runner, "0.0.0.0", PORT).start()
             log.info("webhook: %s", url)
             await asyncio.Event().wait()
@@ -232,7 +241,6 @@ async def main() -> None:
     finally:
         await _http.aclose()
         await bot.session.close()
-
 
 if __name__ == "__main__":
     try:
