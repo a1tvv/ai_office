@@ -23,9 +23,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()                                  # ← до чтения os.environ!
+
 # ─────────────────────────── конфиг ───────────────────────────
 
-BOT_TOKEN = '8249179676:AAGBTpJIYrd6rhL0IUfRzopwpkJJumDszKQ'
+load_dotenv()                                  # ← до чтения os.environ!
+
+BOT_TOKEN = os.environ["volya_token"]
 OPENROUTER_KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = os.getenv("MODEL", "anthropic/claude-sonnet-4.5")
 ALLOWED = {int(x) for x in os.getenv("ALLOWED_USER_IDS", "").replace(" ", "").split(",") if x}
