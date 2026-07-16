@@ -1,13 +1,3 @@
-"""
-AI-офис — один файл, один режим: Стендап-критик Павел Воля.
-
-Запуск:
-    pip install "aiogram>=3.13,<4" httpx
-    export BOT_TOKEN=...  OPENROUTER_API_KEY=...  ALLOWED_USER_IDS=твой_id
-    python bot.py
-
-На Render: USE_WEBHOOK=1, WEBHOOK_BASE=https://<service>.onrender.com
-"""
 from __future__ import annotations
 
 import asyncio
@@ -22,15 +12,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
-
-import os
 from dotenv import load_dotenv
 
 load_dotenv()                                  # ← до чтения os.environ!
 
 # ─────────────────────────── конфиг ───────────────────────────
-
-load_dotenv()                                  # ← до чтения os.environ!
 
 BOT_TOKEN = os.environ["volya_token"]
 OPENROUTER_KEY = os.environ["OPENROUTER_API_KEY"]
@@ -47,7 +33,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 log = logging.getLogger("ai-office")
 
 # ─────────────────────────── персона ───────────────────────────
-# Каждая строка закрыта в двойные кавычки, как ты просил.
 
 SYSTEM_PROMPT = (
     "Ты — Павел Воля. Не просто комик, а оцифрованный здравый смысл, жесткий стендап-фильтр и главный критик твоих стартап-иллюзий.\n"
@@ -91,10 +76,11 @@ SYSTEM_PROMPT = (
     "Критерий «Не лох»: как через неделю понять, что проект приносит реальную пользу, а не просто жрет время."
 )
 
-TEMPERATURE = 0.5  # Чуть повысили температуру для большей креативности в панчах
+TEMPERATURE = 0.5
 
 # ─────────────────────────── состояние ───────────────────────────
 
+# Храним историю по chat_id (чтобы в группе была общая или раздельная контекстная ветка)
 _history: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_PAIRS * 2))
 
 # ─────────────────────────── LLM ───────────────────────────
@@ -132,6 +118,7 @@ TG_LIMIT = 4000
 
 
 def allowed(m: Message) -> bool:
+    # Разрешаем обрабатывать сообщения, если белый список пуст или пользователь в белом списке
     return not ALLOWED or (m.from_user and m.from_user.id in ALLOWED)
 
 
@@ -150,7 +137,7 @@ def chunks(text: str) -> list[str]:
 @dp.message(CommandStart())
 async def start(m: Message) -> None:
     if not allowed(m):
-        return await m.answer(f"Доступ закрыт. id: <code>{m.from_user.id}</code>")
+        return await m.answer(f"Доступ закрыт. id: {m.from_user.id}")
     await m.answer(
         "<b>Павел Воля на связи!</b>\n"
         "Выкладывай свою гениальную идею. Сейчас посмотрим, насколько она смешная.\n\n"
@@ -167,30 +154,54 @@ async def whoami(m: Message) -> None:
 async def reset(m: Message) -> None:
     if not allowed(m):
         return
-    _history.pop(m.from_user.id, None)
+    _history.pop(m.chat.id, None)
     await m.answer("Ладно, забыли твой прошлый позор. Давай по новой.")
 
 
 @dp.message(F.text)
 async def on_text(m: Message) -> None:
+    # 1. Игнорируем других ботов, чтобы избежать вечного цикла ответов друг другу
+    if m.from_user and m.from_user.is_bot:
+        return
+
+    # 2. Проверяем доступ (по белому списку пользователей)
     if not allowed(m):
-        return await m.answer(f"Доступ закрыт. id: <code>{m.from_user.id}</code>")
+        return
 
-    uid = m.from_user.id
-    await m.bot.send_chat_action(m.chat.id, "typing")
+    bot_info = await m.bot.get_me()
+    bot_username = bot_info.username
 
-    msgs = [*_history[uid], {"role": "user", "content": m.text}]
+    # 3. Определяем, нужно ли отвечать в группе
+    is_group = m.chat.type in ("group", "supergroup")
+    is_mentioned = m.text and f"@{bot_username}" in m.text
+    is_reply_to_me = m.reply_to_message and m.reply_to_message.from_user.id == bot_info.id
+
+    # В группе отвечаем только если тегнули или ответили реплаем на сообщение этого бота
+    if is_group and not (is_mentioned or is_reply_to_me):
+        return
+
+    # Очищаем текст от упоминания бота, чтобы не отправлять мусор в нейросеть
+    clean_text = m.text.replace(f"@{bot_username}", "").strip()
+    if not clean_text:
+        return
+
+    chat_id = m.chat.id
+    await m.bot.send_chat_action(chat_id, "typing")
+
+    # Формируем историю по chat_id (для группы она будет общей)
+    msgs = [*_history[chat_id], {"role": "user", "content": clean_text}]
     try:
         answer = await complete(msgs)
     except Exception as exc:
         log.warning("fail: %s", exc)
-        return await m.answer("Я тут поперхнулся от твоей идеи. Попробуй еще раз через минуту.")
+        return await m.reply("Я тут поперхнулся от твоей идеи. Попробуй еще раз через минуту.")
 
-    _history[uid].append({"role": "user", "content": m.text})
-    _history[uid].append({"role": "assistant", "content": answer})
+    _history[chat_id].append({"role": "user", "content": clean_text})
+    _history[chat_id].append({"role": "assistant", "content": answer})
 
+    # Отвечаем реплаем на конкретное сообщение
     for part in chunks(answer):
-        await m.answer(part)
+        await m.reply(part)
 
 
 # ─────────────────────────── запуск ───────────────────────────
