@@ -4,7 +4,6 @@
 
 A Telegram "AI office": each bot is a different AI character. You can talk to the bots about your startup ideas.
 
-![demo](docs/demo.gif)
 <!-- TODO: add a short screen recording of a chat as docs/demo.gif -->
 
 ## Features
